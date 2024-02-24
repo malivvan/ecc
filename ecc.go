@@ -8,7 +8,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"math/big"
@@ -120,14 +119,7 @@ func Cert(privateKey any) ([]byte, error) {
 	}
 	ca.NotBefore, ca.NotAfter = CertValidity()
 	caKey := ed25519.NewKeyFromSeed(caPriv[:])
-	caData, err := x509.CreateCertificate(nil, ca, ca, caKey.Public(), caKey)
-	if err != nil {
-		return nil, err
-	}
-	return pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: caData,
-	}), nil
+	return x509.CreateCertificate(nil, ca, ca, caKey.Public(), caKey)
 }
 
 func Certify(privateKey any, host string) ([]byte, []byte, error) {
@@ -137,15 +129,11 @@ func Certify(privateKey any, host string) ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 	caKey := ed25519.NewKeyFromSeed(caPriv[:])
-	caBlock, err := Cert(privateKey)
+	caData, err := Cert(privateKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	block, _ := pem.Decode(caBlock)
-	if block.Type != "CERTIFICATE" {
-		return nil, nil, fmt.Errorf("invalid certificate pem type")
-	}
-	ca, err := x509.ParseCertificate(block.Bytes)
+	ca, err := x509.ParseCertificate(caData)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -180,14 +168,7 @@ func Certify(privateKey any, host string) ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 
-	return pem.EncodeToMemory(&pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: certData,
-		}),
-		pem.EncodeToMemory(&pem.Block{
-			Type:  "RSA PRIVATE KEY",
-			Bytes: x509.MarshalPKCS1PrivateKey(certKey),
-		}), nil
+	return certData, x509.MarshalPKCS1PrivateKey(certKey), nil
 }
 
 func getKeyData(key any) (b []byte) {

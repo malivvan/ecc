@@ -173,21 +173,17 @@ func TestCertify(t *testing.T) {
 		t.Fatal("invalid private key")
 	}
 
-	caPEM, err := priv.Cert()
+	caData, err := priv.Cert()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	certPEM, certKey, err := priv.Certify("localhost")
+	certData, keyData, err := priv.Certify("localhost")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	caBlock, _ := pem.Decode(caPEM)
-	if caBlock.Type != "CERTIFICATE" {
-		t.Fatal("invalid certificate pem type")
-	}
-	if !bytes.Equal(caBlock.Bytes, []byte{
+	if !bytes.Equal(caData, []byte{
 		0x30, 0x82, 0x01, 0xc9, 0x30, 0x82, 0x01, 0x7b, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02, 0x10, 0x17, 0xef,
 		0x8c, 0x63, 0xfe, 0x46, 0x1e, 0x82, 0x53, 0xa9, 0x90, 0x3b, 0xe5, 0x1d, 0xc1, 0x1b, 0x30, 0x05, 0x06,
 		0x03, 0x2b, 0x65, 0x70, 0x30, 0x5a, 0x31, 0x11, 0x30, 0x0f, 0x06, 0x03, 0x55, 0x04, 0x0a, 0x13, 0x08,
@@ -220,7 +216,7 @@ func TestCertify(t *testing.T) {
 		t.Fatal("invalid certificate pem data")
 	}
 
-	ca, err := x509.ParseCertificate(caBlock.Bytes)
+	ca, err := x509.ParseCertificate(caData)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,11 +227,7 @@ func TestCertify(t *testing.T) {
 		t.Fatal("invalid certificate subject serial number")
 	}
 
-	certBlock, _ := pem.Decode(caPEM)
-	if certBlock.Type != "CERTIFICATE" {
-		t.Fatal("invalid certificate pem type")
-	}
-	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	cert, err := x509.ParseCertificate(certData)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +236,10 @@ func TestCertify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = tls.X509KeyPair(certPEM, certKey)
+	_, err = tls.X509KeyPair(
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certData}),
+		pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyData}),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
