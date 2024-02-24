@@ -19,13 +19,69 @@ func initDeterministic() {
 	runtime.LockOSThread()
 	cryptoRand.Reader = rand.New(rand.NewSource(69))
 	Organization = "Manifold"
-	Validity = func() (time.Time, time.Time, time.Time, time.Time) {
+	CertValidity = func() (time.Time, time.Time) {
 		now := time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
-		caNotBefore := time.Date(now.Year()-(now.Year()%10), time.January, 1, 0, 0, 0, 0, time.UTC)
-		caNotAfter := time.Date(now.Year()-(now.Year()%10)+9, time.December, 31, 23, 59, 59, 0, time.UTC)
-		certNotBefore := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-		certNotAfter := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, time.UTC)
-		return caNotBefore, caNotAfter, certNotBefore, certNotAfter
+		notBefore := time.Date(now.Year()-(now.Year()%10), time.January, 1, 0, 0, 0, 0, time.UTC)
+		notAfter := time.Date(now.Year()-(now.Year()%10)+9, time.December, 31, 23, 59, 59, 0, time.UTC)
+		return notBefore, notAfter
+	}
+	CertifyValidity = func() (time.Time, time.Time) {
+		now := time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
+		notBefore := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		notAfter := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, time.UTC)
+		return notBefore, notAfter
+	}
+}
+
+func TestRegister(t *testing.T) {
+	defer func() {
+		privateKeyFormats = []func([]byte) *PrivateKey{}
+		publicKeyFormats = []func([]byte) *PublicKey{}
+	}()
+
+	priv, err := Private(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if priv == nil {
+		t.Fatal("nil private key")
+	}
+	pub := priv.Public()
+	if pub == nil {
+		t.Fatal("nil public key")
+	}
+
+	Register(func(data []byte) *PrivateKey {
+		if len(data) == 36 && !bytes.HasPrefix(data, []byte("PRIV")) {
+			return nil
+		}
+		var priv PrivateKey
+		copy(priv[:], data[4:])
+		return &priv
+	})
+	Register(func(data []byte) *PublicKey {
+		if len(data) == 35 && !bytes.HasPrefix(data, []byte("PUB")) {
+			return nil
+		}
+		var pub PublicKey
+		copy(pub[:], data[3:])
+		return &pub
+	})
+
+	privFromCustom, err := Private(append([]byte("PRIV"), priv[:]...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(priv[:], privFromCustom[:]) {
+		t.Fatal("invalid private key from bytes")
+	}
+
+	pubFromCustom, err := Public(append([]byte("PUB"), pub[:]...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(pub[:], pubFromCustom[:]) {
+		t.Fatal("invalid public key from bytes")
 	}
 }
 
@@ -117,7 +173,12 @@ func TestCertify(t *testing.T) {
 		t.Fatal("invalid private key")
 	}
 
-	caPEM, certPEM, certKey, err := priv.Certify("localhost")
+	caPEM, err := priv.Cert()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	certPEM, certKey, err := priv.Certify("localhost")
 	if err != nil {
 		t.Fatal(err)
 	}

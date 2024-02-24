@@ -35,6 +35,11 @@ func Public(publicKey any) (*PublicKey, error) {
 	if err == nil {
 		return pub, nil
 	}
+	for _, decodeFn := range publicKeyFormats {
+		if pub := decodeFn(data); pub != nil {
+			return pub, nil
+		}
+	}
 	pub, err = publicKeyFromString(string(data))
 	if err == nil {
 		return pub, nil
@@ -72,13 +77,13 @@ func (pub *PublicKey) Exchange(privateKey any) ([]byte, error) {
 	return Exchange(privateKey, pub)
 }
 
-func (pub *PublicKey) ToED25519() []byte {
+func (pub *PublicKey) ED25519() []byte {
 	var data [32]byte
 	copy(data[:], pub[:])
 	return data[:]
 }
 
-func (pub *PublicKey) ToX25519() []byte {
+func (pub *PublicKey) X25519() []byte {
 	// ed25519.PublicKey is a little endian representation of the y-coordinate,
 	// with the most significant bit set based on the sign of the x-coordinate.
 	bigEndianY := make([]byte, 32)

@@ -30,6 +30,11 @@ func Private(privateKey any) (*PrivateKey, error) {
 	if priv := privateKeyFromPEM(data); priv != nil {
 		return priv, nil
 	}
+	for _, decodeFn := range privateKeyFormats {
+		if priv := decodeFn(data); priv != nil {
+			return priv, nil
+		}
+	}
 	if priv := privateKeyFromString(string(data)); priv != nil {
 		return priv, nil
 	}
@@ -59,7 +64,11 @@ func (priv *PrivateKey) Sign(message []byte) ([]byte, error) {
 	return Sign(priv, message)
 }
 
-func (priv *PrivateKey) Certify(host string) ([]byte, []byte, []byte, error) {
+func (priv *PrivateKey) Cert() ([]byte, error) {
+	return Cert(priv)
+}
+
+func (priv *PrivateKey) Certify(host string) ([]byte, []byte, error) {
 	return Certify(priv, host)
 }
 
@@ -67,11 +76,11 @@ func (priv *PrivateKey) Exchange(publicKey any) ([]byte, error) {
 	return Exchange(priv, publicKey)
 }
 
-func (priv *PrivateKey) ToED25519() []byte {
+func (priv *PrivateKey) ED25519() []byte {
 	return ed25519.NewKeyFromSeed(priv[:])
 }
 
-func (priv *PrivateKey) ToX25519() []byte {
+func (priv *PrivateKey) X25519() []byte {
 	h := sha512.New()
 	h.Write(priv[:])
 	out := h.Sum(nil)

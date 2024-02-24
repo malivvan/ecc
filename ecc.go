@@ -18,19 +18,38 @@ import (
 )
 
 var (
-	// Validity returns the notBefore and notAfter times for the ca certificate and its child certificates.
-	Validity = func() (time.Time, time.Time, time.Time, time.Time) {
+	Organization = "ECC"
+
+	CertValidity = func() (time.Time, time.Time) {
 		now := time.Now().In(time.UTC)
-		caNotBefore := time.Date(now.Year()-(now.Year()%10), time.January, 1, 0, 0, 0, 0, time.UTC)
-		caNotAfter := time.Date(now.Year()-(now.Year()%10)+9, time.December, 31, 23, 59, 59, 0, time.UTC)
-		certNotBefore := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-		certNotAfter := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, time.UTC)
-		return caNotBefore, caNotAfter, certNotBefore, certNotAfter
+		notBefore := time.Date(now.Year()-(now.Year()%10), time.January, 1, 0, 0, 0, 0, time.UTC)
+		notAfter := time.Date(now.Year()-(now.Year()%10)+9, time.December, 31, 23, 59, 59, 0, time.UTC)
+		return notBefore, notAfter
 	}
 
-	// Organization is the organization name used for certificates.
-	Organization = "ECC"
+	CertifyValidity = func() (time.Time, time.Time) {
+		now := time.Now().In(time.UTC)
+		notBefore := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		notAfter := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, time.UTC)
+		return notBefore, notAfter
+	}
 )
+
+var (
+	privateKeyFormats []func([]byte) *PrivateKey
+	publicKeyFormats  []func([]byte) *PublicKey
+)
+
+func Register(fn any) {
+	switch v := fn.(type) {
+	case func([]byte) *PrivateKey:
+		privateKeyFormats = append(privateKeyFormats, v)
+	case func([]byte) *PublicKey:
+		publicKeyFormats = append(publicKeyFormats, v)
+	default:
+		panic(fmt.Errorf("invalid register type: %T", fn))
+	}
+}
 
 func Sign(privateKey any, message []byte) ([]byte, error) {
 	priv, err := Private(privateKey)
@@ -60,11 +79,11 @@ func Exchange(privateKey, publicKey any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	ecdhPriv, err := ecdh.X25519().NewPrivateKey(priv.ToX25519())
+	ecdhPriv, err := ecdh.X25519().NewPrivateKey(priv.X25519())
 	if err != nil {
 		return nil, err
 	}
-	ecdhPub, err := ecdh.X25519().NewPublicKey(pub.ToX25519())
+	ecdhPub, err := ecdh.X25519().NewPublicKey(pub.X25519())
 	if err != nil {
 		return nil, err
 	}
@@ -75,15 +94,11 @@ func Exchange(privateKey, publicKey any) ([]byte, error) {
 	return secret, nil
 }
 
-func Certify(privateKey any, host string) ([]byte, []byte, []byte, error) {
+func Cert(privateKey any) ([]byte, error) {
 
-	// 1. Get the validity for the ca certificate and its child certificate.
-	caNotBefore, caNotAfter, certNotBefore, certNotAfter := Validity()
-
-	// 2. Create deterministic CA Certificate from PrivateKey.
 	caPriv, err := Private(privateKey)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	caSerialHasher := md5.New()
 	caSerialHasher.Write(caPriv.Public()[:])
@@ -102,23 +117,42 @@ func Certify(privateKey any, host string) ([]byte, []byte, []byte, error) {
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		IsCA:                  true,
 		BasicConstraintsValid: true,
-		NotBefore:             caNotBefore,
-		NotAfter:              caNotAfter,
 	}
+	ca.NotBefore, ca.NotAfter = CertValidity()
 	caKey := ed25519.NewKeyFromSeed(caPriv[:])
 	caData, err := x509.CreateCertificate(nil, ca, ca, caKey.Public(), caKey)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
-	ca, err = x509.ParseCertificate(caData)
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: caData,
+	}), nil
+}
+
+func Certify(privateKey any, host string) ([]byte, []byte, error) {
+
+	caPriv, err := Private(privateKey)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
+	}
+	caKey := ed25519.NewKeyFromSeed(caPriv[:])
+	caBlock, err := Cert(privateKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	block, _ := pem.Decode(caBlock)
+	if block.Type != "CERTIFICATE" {
+		return nil, nil, fmt.Errorf("invalid certificate pem type")
+	}
+	ca, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	// 3. Create RSA2048 PrivateKey and x509 Certificate as child of CA.
 	certKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	certSerialHasher := md5.New()
 	certSerialHasher.Write(x509.MarshalPKCS1PublicKey(certKey.Public().(*rsa.PublicKey)))
@@ -134,9 +168,8 @@ func Certify(privateKey any, host string) ([]byte, []byte, []byte, error) {
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
-		NotBefore:             certNotBefore,
-		NotAfter:              certNotAfter,
 	}
+	cert.NotBefore, cert.NotAfter = CertifyValidity()
 	if ip := net.ParseIP(host); ip != nil {
 		cert.IPAddresses = append(cert.IPAddresses, ip)
 	} else {
@@ -144,15 +177,10 @@ func Certify(privateKey any, host string) ([]byte, []byte, []byte, error) {
 	}
 	certData, err := x509.CreateCertificate(rand.Reader, cert, ca, certKey.Public(), caKey)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
-	// 4. Return the PEM encoded CA Certificate, x509 Certificate and RSA2048 PrivateKey.
 	return pem.EncodeToMemory(&pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: caData,
-		}),
-		pem.EncodeToMemory(&pem.Block{
 			Type:  "CERTIFICATE",
 			Bytes: certData,
 		}),
